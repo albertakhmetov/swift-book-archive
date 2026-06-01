@@ -29,8 +29,10 @@ jobs:
   generate-pdfs:
     runs-on: macos-latest
     outputs:
-      matrix: ${{ steps.build_matrix.outputs.matrix }}
-      latest_sha: ${{ steps.fetch_target.outputs.latest_sha }}
+      target_sha: ${{ steps.fetch_target.outputs.latest_sha }}
+      target_sha_short: ${{ steps.fetch_target.outputs.latest_sha_short }}
+      tag_name: ${{ steps.fetch_target.outputs.tag_name }}
+      tag_dir_path: ${{ steps.fetch_target.outputs.tag_dir_path }}
 
     steps:
       - name: Checkout repository
@@ -56,61 +58,47 @@ jobs:
 
           LATEST_SHA=$(echo "$COMMIT_JSON" | jq -r '.sha')
           LATEST_SHA_SHORT=$(echo "$LATEST_SHA" | cut -c1-7)
+          LATEST_MSG=$(echo "$COMMIT_JSON" | jq -r '.commit.message')
+
+          echo "Target SHA: $LATEST_SHA_SHORT"
+          echo "Commit message: $LATEST_MSG"
 
           echo "LATEST_SHA=$LATEST_SHA" >> $GITHUB_ENV
           echo "LATEST_SHA_SHORT=$LATEST_SHA_SHORT" >> $GITHUB_ENV
+          echo "LATEST_MSG<<EOF" >> $GITHUB_ENV
+          echo "$LATEST_MSG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
           echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
+          echo "latest_sha_short=$LATEST_SHA_SHORT" >> $GITHUB_OUTPUT
+          echo "latest_msg=$LATEST_MSG" >> $GITHUB_OUTPUT
 
-      - name: Clone swift-book repo and find tags
-        id: build_matrix
-        run: |
-          git clone https://github.com/swiftlang/swift-book.git swift-book-repo
-          cd swift-book-repo
-          git fetch --tags
-          
-          TARGET_SHA="$LATEST_SHA"
-          TARGET_SHA_SHORT=$(echo "$TARGET_SHA" | cut -c1-7)
-          
-          # Find tags that point to the target commit
-          MISSED_TAGS=$(git tag --points-at $TARGET_SHA | sort -u)
-          
-          echo "Target SHA: $TARGET_SHA_SHORT"
-          echo "Tags on this commit: $MISSED_TAGS"
-          
-          # Build JSON array for matrix
-          if [ -n "$MISSED_TAGS" ]; then
-            SORTED_TAG_SHAS=$(echo "$MISSED_TAGS" | while read tag; do
-              if [ -n "$tag" ]; then
-                COMMIT_SHA=$(git rev-list -n 1 "$tag")
-                COMMIT_SHA_SHORT=$(echo "$COMMIT_SHA" | cut -c1-7)
-                echo "$COMMIT_SHA_SHORT"
-              fi
-            done)
-            TAGS_JSON=$(echo "$SORTED_TAG_SHAS" | jq -R . | jq -s .)
+          # Fetch tags for this commit
+          git clone --depth 1 https://github.com/swiftlang/swift-book.git swift-book-tags
+          cd swift-book-tags
+          git fetch --tags --depth 1
+          TAG_NAME=$(git tag --points-at $LATEST_SHA | head -n 1)
+          cd ..
+          rm -rf swift-book-tags
+
+          echo "Tag name: $TAG_NAME"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+
+          if [ -n "$TAG_NAME" ]; then
+            TAG_DIR_PATH=$(echo "$TAG_NAME" | sed -E 's/^swift-//; s/^([0-9]+)(-)/\1.0\2/; s/-(fcs|beta-.*)/\/\1/')
+            echo "Tag directory path: $TAG_DIR_PATH"
           else
-            TAGS_JSON="[]"
+            TAG_DIR_PATH=""
           fi
-          
-          # Create matrix with target SHA (always build it, even if previously built)
-          COMMITS_JSON=$(jq -n -c \
-            --arg target "$TARGET_SHA_SHORT" \
-            --argjson tags "$TAGS_JSON" \
-            '{commits: ($tags + [$target]) | 
-              reduce .[] as $c ([]; if index($c) then . else . + [$c] end)}')
-          
-          echo "Matrix to build: $COMMITS_JSON"
-          
-          echo "matrix<<EOF" >> $GITHUB_OUTPUT
-          echo "$COMMITS_JSON" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          echo "tag_dir_path=$TAG_DIR_PATH" >> $GITHUB_OUTPUT
 
-  build-pdfs:
+          LATEST_DATE=$(echo "$COMMIT_JSON" | jq -r '.commit.committer.date // .commit.author.date' | cut -dT -f1)
+          echo "LATEST_DATE=$LATEST_DATE" >> $GITHUB_ENV
+          echo "latest_date=$LATEST_DATE" >> $GITHUB_OUTPUT
+
+  build-pdf:
     needs: generate-pdfs
     runs-on: macos-latest
-    strategy:
-      matrix:
-        sha: ${{ fromJson(needs.generate-pdfs.outputs.matrix).commits }}
-      max-parallel: 1
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,70 +110,11 @@ jobs:
 
       - name: Download swift-book repo at commit
         env:
-          SHA: ${{ matrix.sha }}
+          SHA: ${{ needs.generate-pdfs.outputs.target_sha }}
         run: |
           git clone https://github.com/swiftlang/swift-book.git swift-book-repo
           cd swift-book-repo
           git checkout "$SHA"
-
-      - name: Fetch specific swift-book commit SHA, message, and tag
-        id: swiftbook_sha
-        env:
-          SHA: ${{ matrix.sha }}
-        run: |
-          # Fetch commit info for the given SHA
-          COMMIT_JSON=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/swiftlang/swift-book/commits/$SHA")
-          
-          if ! echo "$COMMIT_JSON" | jq -e 'has("sha")' > /dev/null; then
-            echo "❌ Commit not found or invalid response:"
-            echo "$COMMIT_JSON"
-            exit 1
-          fi
-          
-          LATEST_SHA_LOCAL=$(echo "$COMMIT_JSON" | jq -r '.sha')
-          LATEST_SHA_SHORT=$(echo "$LATEST_SHA_LOCAL" | cut -c1-7)
-          LATEST_MSG=$(echo "$COMMIT_JSON" | jq -r '.commit.message')
-          
-          echo "Commit SHA: $LATEST_SHA_SHORT"
-          echo "Commit message: $LATEST_MSG"
-          
-          # Export as env vars
-          echo "LATEST_SHA=$LATEST_SHA_LOCAL" >> $GITHUB_ENV
-          echo "LATEST_SHA_SHORT=$LATEST_SHA_SHORT" >> $GITHUB_ENV
-          echo "LATEST_MSG<<EOF" >> $GITHUB_ENV
-          echo "$LATEST_MSG" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-          
-          # Export as outputs
-          echo "latest_sha=$LATEST_SHA_LOCAL" >> $GITHUB_OUTPUT
-          echo "latest_msg<<EOF" >> $GITHUB_OUTPUT
-          echo "$LATEST_MSG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-          
-          # Fetch tags that point to this commit
-          TAG_JSON=$(curl -s -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/swiftlang/swift-book/tags")
-          TAG_NAME=$(echo "$TAG_JSON" | jq -r --arg sha "$LATEST_SHA_LOCAL" '.[] | select(.commit.sha==$sha) | .name')
-          
-          echo "Tag name: $TAG_NAME"
-          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          
-          # Compute grouped directory path from tag name (e.g., swift-6.2-fcs -> 6.2/fcs)
-          if [ -n "$TAG_NAME" ]; then
-            TAG_DIR_PATH=$(echo "$TAG_NAME" | sed -E 's/^swift-//; s/^([0-9]+)(-)/\1.0\2/; s/-(fcs|beta-.*)/\/\1/')
-            echo "Tag directory path: $TAG_DIR_PATH"
-          else
-            TAG_DIR_PATH=""
-          fi
-          
-          echo "TAG_DIR_PATH=$TAG_DIR_PATH" >> $GITHUB_ENV
-          echo "tag_dir_path=$TAG_DIR_PATH" >> $GITHUB_OUTPUT
-          
-          LATEST_DATE=$(echo "$COMMIT_JSON" | jq -r '.commit.committer.date // .commit.author.date' | cut -dT -f1)
-          echo "LATEST_DATE=$LATEST_DATE" >> $GITHUB_ENV
-          echo "latest_date=$LATEST_DATE" >> $GITHUB_OUTPUT
 
       - name: Download SF Pro Fonts DMG
         run: curl -L -o SF-Pro.dmg https://developer.apple.com/download/files/SF-Pro.dmg
@@ -251,7 +180,6 @@ jobs:
         run: |
           mkdir -p archive
 
-          # Helper function to run commands quietly unless debug is enabled
           run_quiet() {
             if [ "$ACTIONS_STEP_DEBUG" = "true" ]; then
               "$@"
@@ -260,17 +188,14 @@ jobs:
             fi
           }
 
-          # Generate digital light mode PDF (no gutter)
           echo "Generating digital light mode PDF..."
           run_quiet swift_book_pdf -i ./swift-book-repo --no-gutter archive/latest/swift_book_digital.pdf
 
-          # Generate print light mode PDF (no gutter)
           echo "Generating print light mode PDF..."
           run_quiet swift_book_pdf -i ./swift-book-repo --mode print --no-gutter archive/latest/swift_book_print.pdf
 
-          # If this commit has a tag, also copy PDFs into the grouped directory
-          if [ -n "${{ steps.swiftbook_sha.outputs.tag_dir_path }}" ]; then
-            TAG_DIR="archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"
+          if [ -n "${{ needs.generate-pdfs.outputs.tag_dir_path }}" ]; then
+            TAG_DIR="archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}"
             mkdir -p "$TAG_DIR"
             cp archive/latest/*.pdf "$TAG_DIR"/
             echo "Also copied PDFs to $TAG_DIR"
@@ -292,10 +217,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Add PDFs
           git add archive/latest/*.pdf || true
-          if [ -n "${{ steps.swiftbook_sha.outputs.tag_dir_path }}" ]; then
-            git add "archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"/*.pdf || true
+          if [ -n "${{ needs.generate-pdfs.outputs.tag_dir_path }}" ]; then
+            git add "archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}"/*.pdf || true
           fi
           git add archive/README.md archive/*/README.md archive/*/*/README.md || true
           git add .github/automation/releases.json README.md
@@ -311,23 +235,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Tag commit if upstream is tagged
-        if: steps.swiftbook_sha.outputs.tag_name != ''
+        if: needs.generate-pdfs.outputs.tag_name != ''
         run: |
-          git tag "${{ steps.swiftbook_sha.outputs.tag_name }}"
-          git push origin "${{ steps.swiftbook_sha.outputs.tag_name }}"
+          git tag "${{ needs.generate-pdfs.outputs.tag_name }}"
+          git push origin "${{ needs.generate-pdfs.outputs.tag_name }}"
 
       - name: Create release and upload book files if upstream is tagged
-        if: steps.swiftbook_sha.outputs.tag_name != ''
+        if: needs.generate-pdfs.outputs.tag_name != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.swiftbook_sha.outputs.tag_name }}
-          name: ${{ steps.swiftbook_sha.outputs.tag_name }}
+          tag_name: ${{ needs.generate-pdfs.outputs.tag_name }}
+          name: ${{ needs.generate-pdfs.outputs.tag_name }}
           body: |
-            Release for Swift Book upstream tag ${{ steps.swiftbook_sha.outputs.tag_name }}
+            Release for Swift Book upstream tag ${{ needs.generate-pdfs.outputs.tag_name }}
 
-            https://github.com/swiftlang/swift-book/releases/tag/${{ steps.swiftbook_sha.outputs.tag_name }}
+            https://github.com/swiftlang/swift-book/releases/tag/${{ needs.generate-pdfs.outputs.tag_name }}
           files: |
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_digital.pdf
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_print.pdf
+            archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}/swift_book_digital.pdf
+            archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}/swift_book_print.pdf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
