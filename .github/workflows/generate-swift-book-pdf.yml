@@ -26,78 +26,7 @@ permissions:
   actions: read
 
 jobs:
-  generate-pdfs:
-    runs-on: macos-latest
-    outputs:
-      target_sha: ${{ steps.fetch_target.outputs.latest_sha }}
-      target_sha_short: ${{ steps.fetch_target.outputs.latest_sha_short }}
-      tag_name: ${{ steps.fetch_target.outputs.tag_name }}
-      tag_dir_path: ${{ steps.fetch_target.outputs.tag_dir_path }}
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Fetch target commit info
-        id: fetch_target
-        env:
-          INPUT_SHA: ${{ github.event.inputs.sha }}
-          GITHUB_API_TOKEN: ${{ github.token }}
-        run: |
-          if [ -n "$INPUT_SHA" ]; then
-            INPUT_SHA_SHORT=$(echo "$INPUT_SHA" | cut -c1-7)
-            echo "Using manually provided SHA: $INPUT_SHA_SHORT"
-            COMMIT_JSON=$(curl -s -H "Authorization: Bearer $GITHUB_API_TOKEN" \
-              "https://api.github.com/repos/swiftlang/swift-book/commits/$INPUT_SHA")
-          else
-            echo "Fetching latest commit from main..."
-            COMMIT_JSON=$(curl -s -H "Authorization: Bearer $GITHUB_API_TOKEN" \
-              "https://api.github.com/repos/swiftlang/swift-book/commits?sha=main&per_page=1")
-            COMMIT_JSON=$(echo "$COMMIT_JSON" | jq '.[0]')
-          fi
-
-          LATEST_SHA=$(echo "$COMMIT_JSON" | jq -r '.sha')
-          LATEST_SHA_SHORT=$(echo "$LATEST_SHA" | cut -c1-7)
-          LATEST_MSG=$(echo "$COMMIT_JSON" | jq -r '.commit.message')
-
-          echo "Target SHA: $LATEST_SHA_SHORT"
-          echo "Commit message: $LATEST_MSG"
-
-          echo "LATEST_SHA=$LATEST_SHA" >> $GITHUB_ENV
-          echo "LATEST_SHA_SHORT=$LATEST_SHA_SHORT" >> $GITHUB_ENV
-          echo "LATEST_MSG<<EOF" >> $GITHUB_ENV
-          echo "$LATEST_MSG" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
-          echo "latest_sha_short=$LATEST_SHA_SHORT" >> $GITHUB_OUTPUT
-          echo "latest_msg=$LATEST_MSG" >> $GITHUB_OUTPUT
-
-          # Fetch tags for this commit
-          git clone --depth 1 https://github.com/swiftlang/swift-book.git swift-book-tags
-          cd swift-book-tags
-          git fetch --tags --depth 1
-          TAG_NAME=$(git tag --points-at $LATEST_SHA | head -n 1)
-          cd ..
-          rm -rf swift-book-tags
-
-          echo "Tag name: $TAG_NAME"
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-
-          if [ -n "$TAG_NAME" ]; then
-            TAG_DIR_PATH=$(echo "$TAG_NAME" | sed -E 's/^swift-//; s/^([0-9]+)(-)/\1.0\2/; s/-(fcs|beta-.*)/\/\1/')
-            echo "Tag directory path: $TAG_DIR_PATH"
-          else
-            TAG_DIR_PATH=""
-          fi
-          echo "tag_dir_path=$TAG_DIR_PATH" >> $GITHUB_OUTPUT
-
-          LATEST_DATE=$(echo "$COMMIT_JSON" | jq -r '.commit.committer.date // .commit.author.date' | cut -dT -f1)
-          echo "LATEST_DATE=$LATEST_DATE" >> $GITHUB_ENV
-          echo "latest_date=$LATEST_DATE" >> $GITHUB_OUTPUT
-
-  build-pdf:
-    needs: generate-pdfs
+  build-pdfs:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -105,16 +34,49 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Update main branch and tags
-        run: git checkout main && git pull --tags origin main
-
-      - name: Download swift-book repo at commit
-        env:
-          SHA: ${{ needs.generate-pdfs.outputs.target_sha }}
+      - name: Clone swift-book repo and determine target
+        id: target
         run: |
+          # Clone the repository
           git clone https://github.com/swiftlang/swift-book.git swift-book-repo
           cd swift-book-repo
-          git checkout "$SHA"
+          
+          # Determine which commit to build
+          if [ -n "${{ github.event.inputs.sha }}" ]; then
+            echo "Using manually provided SHA: ${{ github.event.inputs.sha }}"
+            git checkout ${{ github.event.inputs.sha }}
+          else
+            echo "Fetching latest commit from main branch..."
+            git fetch origin main
+            git checkout origin/main
+          fi
+          
+          # Get the actual commit SHA
+          TARGET_SHA=$(git rev-parse HEAD)
+          TARGET_SHA_SHORT=$(git rev-parse --short=7 HEAD)
+          COMMIT_MSG=$(git log -1 --format=%B)
+          TAG_NAME=$(git tag --points-at HEAD | head -n 1)
+          
+          echo "Target SHA: $TARGET_SHA_SHORT"
+          echo "Commit message: $(echo "$COMMIT_MSG" | head -n 1)"
+          echo "Tag: $TAG_NAME"
+          
+          # Save to environment variables
+          echo "TARGET_SHA=$TARGET_SHA" >> $GITHUB_ENV
+          echo "TARGET_SHA_SHORT=$TARGET_SHA_SHORT" >> $GITHUB_ENV
+          echo "COMMIT_MSG<<EOF" >> $GITHUB_ENV
+          echo "$COMMIT_MSG" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          
+          # Calculate tag directory path if tag exists
+          if [ -n "$TAG_NAME" ]; then
+            TAG_DIR_PATH=$(echo "$TAG_NAME" | sed -E 's/^swift-//; s/^([0-9]+)(-)/\1.0\2/; s/-(fcs|beta-.*)/\/\1/')
+            echo "TAG_DIR_PATH=$TAG_DIR_PATH" >> $GITHUB_ENV
+          fi
+          
+          # Go back to root directory
+          cd ..
 
       - name: Download SF Pro Fonts DMG
         run: curl -L -o SF-Pro.dmg https://developer.apple.com/download/files/SF-Pro.dmg
@@ -194,8 +156,8 @@ jobs:
           echo "Generating print light mode PDF..."
           run_quiet swift_book_pdf -i ./swift-book-repo --mode print --no-gutter archive/latest/swift_book_print.pdf
 
-          if [ -n "${{ needs.generate-pdfs.outputs.tag_dir_path }}" ]; then
-            TAG_DIR="archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}"
+          if [ -n "$TAG_DIR_PATH" ]; then
+            TAG_DIR="archive/$TAG_DIR_PATH"
             mkdir -p "$TAG_DIR"
             cp archive/latest/*.pdf "$TAG_DIR"/
             echo "Also copied PDFs to $TAG_DIR"
@@ -204,7 +166,7 @@ jobs:
           echo "All PDFs generated successfully!"
 
       - name: Update release manifest
-        run: python3 .github/automation/scripts/update-release-manifest.py --sha "$LATEST_SHA" --upstream-repo swift-book-repo
+        run: python3 .github/automation/scripts/update-release-manifest.py --sha "$TARGET_SHA" --upstream-repo swift-book-repo
 
       - name: Regenerate README index
         run: python3 .github/automation/scripts/generate-index.py
@@ -218,8 +180,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git add archive/latest/*.pdf || true
-          if [ -n "${{ needs.generate-pdfs.outputs.tag_dir_path }}" ]; then
-            git add "archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}"/*.pdf || true
+          if [ -n "$TAG_DIR_PATH" ]; then
+            git add "archive/$TAG_DIR_PATH"/*.pdf || true
           fi
           git add archive/README.md archive/*/README.md archive/*/*/README.md || true
           git add .github/automation/releases.json README.md
@@ -227,7 +189,7 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
-            COMMIT_MSG=$(printf "Swift Book upstream: %s\n%s\n\nUpstream commit: https://github.com/swiftlang/swift-book/commit/%s" "$LATEST_SHA_SHORT" "$LATEST_MSG" "$LATEST_SHA")
+            COMMIT_MSG=$(printf "Swift Book upstream: %s\n%s\n\nUpstream commit: https://github.com/swiftlang/swift-book/commit/%s" "$TARGET_SHA_SHORT" "$COMMIT_MSG" "$TARGET_SHA")
             git commit -m "$COMMIT_MSG"
             git push origin HEAD:${GITHUB_REF#refs/heads/}
           fi
@@ -235,23 +197,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Tag commit if upstream is tagged
-        if: needs.generate-pdfs.outputs.tag_name != ''
+        if: env.TAG_NAME != ''
         run: |
-          git tag "${{ needs.generate-pdfs.outputs.tag_name }}"
-          git push origin "${{ needs.generate-pdfs.outputs.tag_name }}"
+          git tag "$TAG_NAME"
+          git push origin "$TAG_NAME"
 
       - name: Create release and upload book files if upstream is tagged
-        if: needs.generate-pdfs.outputs.tag_name != ''
+        if: env.TAG_NAME != ''
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.generate-pdfs.outputs.tag_name }}
-          name: ${{ needs.generate-pdfs.outputs.tag_name }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: ${{ env.TAG_NAME }}
           body: |
-            Release for Swift Book upstream tag ${{ needs.generate-pdfs.outputs.tag_name }}
+            Release for Swift Book upstream tag ${{ env.TAG_NAME }}
 
-            https://github.com/swiftlang/swift-book/releases/tag/${{ needs.generate-pdfs.outputs.tag_name }}
+            https://github.com/swiftlang/swift-book/releases/tag/${{ env.TAG_NAME }}
           files: |
-            archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}/swift_book_digital.pdf
-            archive/${{ needs.generate-pdfs.outputs.tag_dir_path }}/swift_book_print.pdf
+            archive/${{ env.TAG_DIR_PATH }}/swift_book_digital.pdf
+            archive/${{ env.TAG_DIR_PATH }}/swift_book_print.pdf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
