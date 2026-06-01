@@ -2,25 +2,19 @@
 
 **Latest** is a continuously updated preview of _The Swift Programming Language_ from the source repository and may include unpublished changes before an official release.
 
-Latest commit date: May 31, 2026
+Latest commit date: Feb 25, 2026
 
 ## Upstream Commit
 
-SHA: `dd068529308cc52186fc511e25a0e3c6091f01bb`
+SHA: `5396a77fc00d3f5ef4ed41e019ee71cf2de776dc`
 
 Commit message:
 ```text
-Improve Task cancellation sample code (#463)
-
-- Remove the use of deprecated Task cancellation API from the Task
-cancellation section.
-- Improve the clarity of the Task cancellation sample code snippet.
-
-Fixes: https://github.com/swiftlang/swift-book/issues/462
+Update for Swift 6.3 beta 3
 ```
 
-- [View upstream commit](https://github.com/swiftlang/swift-book/commit/dd068529308cc52186fc511e25a0e3c6091f01bb)
-- [Browse upstream repository](https://github.com/swiftlang/swift-book/tree/dd068529308cc52186fc511e25a0e3c6091f01bb)
+- [View upstream commit](https://github.com/swiftlang/swift-book/commit/5396a77fc00d3f5ef4ed41e019ee71cf2de776dc)
+- [Browse upstream repository](https://github.com/swiftlang/swift-book/tree/5396a77fc00d3f5ef4ed41e019ee71cf2de776dc)
 
 ## Pick the edition that works for you.
 
