@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Generate Swift Book PDFs
+name: Generate Swift Book PDF
 
 on:
   workflow_dispatch:
@@ -26,7 +26,7 @@ permissions:
   actions: read
 
 jobs:
-  build-pdfs:
+  build-pdf:
     runs-on: macos-latest
     steps:
       - name: Checkout repository
@@ -102,7 +102,7 @@ jobs:
           path: |
             ~/texlive
             ~/.texlive2025
-          key: texlive-2025-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-swift-book-pdfs.yml') }}
+          key: texlive-2025-${{ runner.os }}-${{ hashFiles('.github/workflows/generate-swift-book-pdf.yml') }}
           restore-keys: |
             texlive-2025-${{ runner.os }}-
 
@@ -138,7 +138,7 @@ jobs:
           tlmgr path add
           echo "$TEXDIR/bin/universal-darwin" >> $GITHUB_PATH
 
-      - name: Generate PDFs
+      - name: Generate PDF
         run: |
           mkdir -p archive
 
@@ -151,19 +151,16 @@ jobs:
           }
 
           echo "Generating digital light mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo --no-gutter archive/latest/swift_book_digital.pdf
-
-          echo "Generating print light mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo --mode print --no-gutter archive/latest/swift_book_print.pdf
+          run_quiet swift_book_pdf -i ./swift-book-repo --no-gutter archive/latest/swift_book.pdf
 
           if [ -n "$TAG_DIR_PATH" ]; then
             TAG_DIR="archive/$TAG_DIR_PATH"
             mkdir -p "$TAG_DIR"
-            cp archive/latest/*.pdf "$TAG_DIR"/
-            echo "Also copied PDFs to $TAG_DIR"
+            cp archive/latest/swift_book.pdf "$TAG_DIR"/
+            echo "Also copied PDF to $TAG_DIR"
           fi
 
-          echo "All PDFs generated successfully!"
+          echo "PDF generated successfully!"
 
       - name: Update release manifest
         run: python3 .github/automation/scripts/update-release-manifest.py --sha "$TARGET_SHA" --upstream-repo swift-book-repo
@@ -174,14 +171,14 @@ jobs:
       - name: Regenerate folder READMEs
         run: python3 .github/automation/scripts/generate-folder-readmes.py
 
-      - name: Commit and push PDFs to repository
+      - name: Commit and push PDF to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          git add archive/latest/*.pdf || true
+          git add archive/latest/swift_book.pdf || true
           if [ -n "$TAG_DIR_PATH" ]; then
-            git add "archive/$TAG_DIR_PATH"/*.pdf || true
+            git add "archive/$TAG_DIR_PATH/swift_book.pdf" || true
           fi
           git add archive/README.md archive/*/README.md archive/*/*/README.md || true
           git add .github/automation/releases.json README.md
@@ -202,7 +199,7 @@ jobs:
           git tag "$TAG_NAME"
           git push origin "$TAG_NAME"
 
-      - name: Create release and upload book files if upstream is tagged
+      - name: Create release and upload PDF if upstream is tagged
         if: env.TAG_NAME != ''
         uses: softprops/action-gh-release@v2
         with:
@@ -213,7 +210,6 @@ jobs:
 
             https://github.com/swiftlang/swift-book/releases/tag/${{ env.TAG_NAME }}
           files: |
-            archive/${{ env.TAG_DIR_PATH }}/swift_book_digital.pdf
-            archive/${{ env.TAG_DIR_PATH }}/swift_book_print.pdf
+            archive/${{ env.TAG_DIR_PATH }}/swift_book.pdf
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
