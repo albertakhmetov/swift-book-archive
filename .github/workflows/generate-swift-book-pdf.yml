@@ -20,8 +20,10 @@ on:
       sha:
         description: 'Optional specific commit SHA of swift-book to build from'
         required: false
-  schedule:
-    - cron: '18 0 * * *'  # Every day at 00:18 UTC
+
+permissions:
+  contents: write
+  actions: read
 
 jobs:
   generate-pdfs:
@@ -101,7 +103,6 @@ jobs:
           echo "EOF" >> $GITHUB_ENV
 
           # Build JSON array for matrix: tagged commits first (oldest to newest), then target SHA
-          # Sort tagged commits chronologically (oldest first) and convert to short SHAs
           if [ -n "$MISSED_TAGS" ]; then
             SORTED_TAG_SHAS=$(echo "$MISSED_TAGS" | while read tag; do
               if [ -n "$tag" ]; then
@@ -122,9 +123,6 @@ jobs:
 
           echo "TAGS_JSON:"
           echo "$TAGS_JSON"
-
-          echo "COMMITS_JSON:"
-          echo "$COMMITS_JSON"
           
           # Create matrix with chronologically ordered short SHAs, ensuring no duplicates
           TARGET_SHA_SHORT=$(echo "$TARGET_SHA" | cut -c1-7)
@@ -134,7 +132,6 @@ jobs:
             '{commits: ($tags + [$target]) | 
               reduce .[] as $c ([]; if index($c) then . else . + [$c] end)}')
           
-          # Use the GITHUB_OUTPUT heredoc format to safely write multi-line or JSON outputs
           echo "matrix<<EOF" >> $GITHUB_OUTPUT
           echo "$COMMITS_JSON" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -327,21 +324,13 @@ jobs:
             fi
           }
 
-          # Generate digital light mode PDF
+          # Generate digital light mode PDF (no gutter)
           echo "Generating digital light mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo archive/latest/swift_book_digital.pdf
+          run_quiet swift_book_pdf -i ./swift-book-repo --no-gutter archive/latest/swift_book_digital.pdf
 
-          # Generate digital dark mode PDF
-          echo "Generating digital dark mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo --dark archive/latest/swift_book_digital_dark.pdf
-
-          # Generate print light mode PDF
+          # Generate print light mode PDF (no gutter)
           echo "Generating print light mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo --mode print archive/latest/swift_book_print.pdf
-
-          # Generate print dark mode PDF
-          echo "Generating print dark mode PDF..."
-          run_quiet swift_book_pdf -i ./swift-book-repo --mode print --dark archive/latest/swift_book_print_dark.pdf
+          run_quiet swift_book_pdf -i ./swift-book-repo --mode print --no-gutter archive/latest/swift_book_print.pdf
 
           # If this commit has a tag, also copy PDFs into the grouped directory
           if [ -n "${{ steps.swiftbook_sha.outputs.tag_dir_path }}" ]; then
@@ -352,28 +341,6 @@ jobs:
           fi
 
           echo "All PDFs generated successfully!"
-
-      - name: Generate EPUB
-        if: steps.check_sha.outputs.skip != 'true'
-        run: |
-          echo "Generating EPUB..."
-          swift-book-epub \
-            -e \
-            -i ./swift-book-repo \
-            --cover-footer-line "Based on the Swift.org source" \
-            --publisher "Evangelos Kassos" \
-            --contributor "Evangelos Kassos" \
-            archive/latest/swift_book.epub
-
-          if [ -n "${{ steps.swiftbook_sha.outputs.tag_dir_path }}" ]; then
-            TAG_DIR="archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"
-            mkdir -p "$TAG_DIR"
-            cp archive/latest/swift_book.epub "$TAG_DIR"/
-            cp archive/latest/swift_book_cover.png "$TAG_DIR"/
-            echo "Also copied EPUB to $TAG_DIR"
-          fi
-
-          echo "EPUB generated successfully!"
 
       - name: Update release manifest
         if: steps.check_sha.outputs.skip != 'true'
@@ -394,19 +361,15 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          # Add PDFs (won’t fail if none exist)
+          # Add PDFs
           git add archive/latest/*.pdf || true
-          git add archive/latest/*.epub || true
-          git add archive/latest/*_cover.png || true
           if [ -n "${{ steps.swiftbook_sha.outputs.tag_dir_path }}" ]; then
             git add "archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"/*.pdf || true
-            git add "archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"/*.epub || true
-            git add "archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}"/*_cover.png || true
           fi
           git add archive/README.md archive/*/README.md archive/*/*/README.md || true
           git add .github/automation/releases.json README.md
 
-          # Check if there’s anything staged
+          # Check if there's anything staged
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
@@ -438,10 +401,6 @@ jobs:
             https://github.com/swiftlang/swift-book/releases/tag/${{ steps.swiftbook_sha.outputs.tag_name }}
           files: |
             archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_digital.pdf
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_digital_dark.pdf
             archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_print.pdf
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_print_dark.pdf
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book.epub
-            archive/${{ steps.swiftbook_sha.outputs.tag_dir_path }}/swift_book_cover.png
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
