@@ -2,19 +2,19 @@
 
 **Latest** is a continuously updated preview of _The Swift Programming Language_ from the source repository and may include unpublished changes before an official release.
 
-Latest commit date: Feb 25, 2026
+Latest commit date: Mar 13, 2026
 
 ## Upstream Commit
 
-SHA: `5396a77fc00d3f5ef4ed41e019ee71cf2de776dc`
+SHA: `3edebee849459d7e273c5361b8e3df35cffab3d2`
 
 Commit message:
 ```text
-Update for Swift 6.3 beta 3
+Add revision history entries
 ```
 
-- [View upstream commit](https://github.com/swiftlang/swift-book/commit/5396a77fc00d3f5ef4ed41e019ee71cf2de776dc)
-- [Browse upstream repository](https://github.com/swiftlang/swift-book/tree/5396a77fc00d3f5ef4ed41e019ee71cf2de776dc)
+- [View upstream commit](https://github.com/swiftlang/swift-book/commit/3edebee849459d7e273c5361b8e3df35cffab3d2)
+- [Browse upstream repository](https://github.com/swiftlang/swift-book/tree/3edebee849459d7e273c5361b8e3df35cffab3d2)
 
 ## Pick the edition that works for you.
 
